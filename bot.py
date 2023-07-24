@@ -6,8 +6,6 @@ from random import randrange
 from pprint import pprint
 from db import *
 
-#import psycopg2
-#from psycopg2 import errors
 
 class Bot:
     def __init__(self):
@@ -32,12 +30,12 @@ class Bot:
     def name(self, user_id):
         """getting the name of the user who written to the bot"""
         user_info = self.vk_group_got_api.users.get(user_id=user_id)
-        # print(user_info)
-        try:
-            name = user_info[0]['first_name']
-            return name
-        except KeyError:
-            self.send_msg(user_id, "Ошибка")
+        if user_info:
+            try:
+                name = user_info[0]['first_name']
+                return name
+            except KeyError:
+                self.send_msg(user_id, "Ошибка")
 
     def naming_of_years(self, years, till=True):
         """addition to years"""
@@ -57,26 +55,22 @@ class Bot:
                 return f'{years} лет'
 
     def input_looking_age(self, user_id, age):
-        global age_from, age_to
         a = age.split("-")
         try:
             age_from = int(a[0])
             age_to = int(a[1])
             if age_from == age_to:
                 self.send_msg(user_id, f' Ищем возраст {self.naming_of_years(age_to, False)}')
-                return
+                return age_from, age_to
             self.send_msg(user_id, f' Ищем возраст в пределах от {age_from} и до {self.naming_of_years(age_to, True)}')
-            return
+            return age_from, age_to
         except IndexError:
             age_to = int(age)
             self.send_msg(user_id, f' Ищем возраст {self.naming_of_years(age_to, False)}')
-            return
-        except NameError:
-            self.send_msg(user_id, f' NameError! Введен не правильный числовой формат! Game over!')
-            return
-        except ValueError:
-            self.send_msg(user_id, f' ValueError! VВведен не правильный числовой формат! Game over!')
-            return
+            return age_to, age_to
+        except (NameError, ValueError):
+            self.send_msg(user_id, f' Ошибка! Введен не правильный числовой формат! Game over!')
+            return None, None
 
     def get_years_of_person(self, bdate: str) -> object:
         """determining the number of years"""
@@ -118,7 +112,6 @@ class Bot:
 
     def get_age_of_user(self, user_id):
         """determine the user's age"""
-        global age_from, age_to
         try:
             info = self.vk_user_got_api.users.get(
                 user_ids=user_id,
@@ -136,8 +129,10 @@ class Bot:
                 for event in self.longpoll.listen():
                     if event.type == VkEventType.MESSAGE_NEW and event.to_me:
                         age = event.text
-                        return self.input_looking_age(user_id, age)
-            return print(f' Ищем вашего возраста {self.naming_of_years(age_to)}')
+                        age_from, age_to = self.input_looking_age(user_id, age)
+                        if age_from is not None and age_to is not None:
+                            break
+            return age_from, age_to
         except KeyError:
             print(f'День рождения скрыт настройками приватности!')
             self.send_msg(user_id,
@@ -147,11 +142,13 @@ class Bot:
             for event in self.longpoll.listen():
                 if event.type == VkEventType.MESSAGE_NEW and event.to_me:
                     age = event.text
-                    return self.input_looking_age(user_id, age)
+                    age_from, age_to = self.input_looking_age(user_id, age)
+                    if age_from is not None and age_to is not None:
+                        break
+            return age_from, age_to
 
     def get_target_city(self, user_id):
         """define city to search"""
-        global city_id, city_title
         self.send_msg(user_id,
                       f' Введите "Да" - поиск будет произведен в городе указанный в профиле.'
                       f' Или введите название города, например: Москва'
@@ -166,7 +163,7 @@ class Bot:
                     )
                     city_id = info[0]['city']["id"]
                     city_title = info[0]['city']["title"]
-                    return f' в городе {city_title}.'
+                    return city_id, city_title
                 else:
                     cities = self.vk_user_got_api.database.getCities(
                         country_id=1,
@@ -178,7 +175,7 @@ class Bot:
                         if i["title"] == answer.capitalize():
                             city_id = i["id"]
                             city_title = answer.capitalize()
-                            return f' в городе {city_title}'
+                            return city_id, city_title
 
     def looking_for_gender(self, user_id):
         """looking for the opposite gender to the user"""
@@ -186,40 +183,55 @@ class Bot:
             user_id=user_id,
             fields="sex"
         )
-        if info[0]['sex'] == 1:  # 1 — женщина, 2 — мужчина,
-            print(f'Ваш пол женский, ищем мужчину.')
-            return 2
-        elif info[0]['sex'] == 2:
-            print(f'Ваш пол мужской, ищем женщину.')
-            return 1
-        else:
-            print("ERROR!!!")
+        if info:
+            if info[0]['sex'] == 1:  # 1 — женщина, 2 — мужчина,
+                print(f'Ваш пол женский, ищем мужчину.')
+                return 2
+            elif info[0]['sex'] == 2:
+                print(f'Ваш пол мужской, ищем женщину.')
+                return 1
+        print("ERROR!!!")
+        return None
 
     def looking_for_persons(self, user_id):
         """Search for a person based on the data received."""
         global list_found_persons
         list_found_persons = []
-        res = self.vk_user_got_api.users.search(
-            sort=0,
-            city=city_id,
-            hometown=city_title,
-            sex=self.looking_for_gender(user_id),
-            status=1,
-            age_from=age_from,
-            age_to=age_to,
-            has_photo=1,
-            count=100,
-            fields="can_write_private_message,city,domain,home_town"
-        )
-        for person in res["items"]:
-            if not person["is_closed"]:
-                if "city" in person and person["city"]["id"] == city_id and person["city"]["title"] == city_title:
-                    list_found_persons.append(person["id"])
-        print(f'Bot found {len(list_found_persons)} opened profiles for viewing from {res["count"]}')
+        age_from, age_to = self.get_age_of_user(user_id)
+        if age_from is not None and age_to is not None:
+            city_id, city_title = self.get_target_city(user_id)
+            if city_id is not None and city_title is not None:
+                gender = self.looking_for_gender(user_id)
+                if gender is not None:
+                    offset = 0
+                    while True:
+                        res = self.vk_user_got_api.users.search(
+                            sort=0,
+                            city=city_id,
+                            hometown=city_title,
+                            sex=gender,
+                            status=1,
+                            age_from=age_from,
+                            age_to=age_to,
+                            has_photo=1,
+                            count=100,
+                            fields="can_write_private_message,city,domain,home_town",
+                            offset=offset
+                        )
+                        if not res["items"]:
+                            break
+
+                        for person in res["items"]:
+                            if not person["is_closed"]:
+                                if "city" in person and person["city"]["id"] == city_id and person["city"]["title"] == city_title:
+                                    list_found_persons.append(person["id"])
+
+                        offset += 100
+
+                    print(f'Bot found {len(list_found_persons)} opened profiles for viewing from {res["count"]}')
 
     def photo_of_found_person(self, user_id):
         """getting a photo of a found person"""
-        global attachments
         res = self.vk_user_got_api.photos.get(
             owner_id=user_id,
             album_id="profile",  # wall — фотографии со стены, profile — фотографии профиля.
@@ -253,19 +265,20 @@ class Bot:
                 return print(f'Нет фото')
 
     def get_found_person_id(self):
-        global unique_person_id, found_persons
+        global list_found_persons
         seen_person = []
         for i in check():  # Выбираем из БД просмотренные анкеты.
             seen_person.append(int(i[0]))
         if not seen_person:
-            try:   # Если сразу после запуска проги набрать Смотреть или S, то ошибка так как в list_found_persons никого нет.
+            if not list_found_persons:
+                self.looking_for_persons(user_id)
+            try:
                 unique_person_id = list_found_persons[0]
                 return unique_person_id
-            except NameError:
-                found_persons = 0
-                return found_persons
+            except IndexError:
+                return None
         else:
-            try:  # Если сразу после запуска проги набрать Смотреть или S, то ошибка так как в list_found_persons никого нет.
+            try:
                 for ifp in list_found_persons:
                     if ifp in seen_person:
                         pass
@@ -273,8 +286,7 @@ class Bot:
                         unique_person_id = ifp
                         return unique_person_id
             except NameError:
-                found_persons = 0
-                return found_persons
+                return None
 
     def get_user_info(self, user_id, fields):
         """Getting user info using the 'users.get' method with specified fields."""
@@ -331,11 +343,14 @@ class Bot:
             for event in self.longpoll.listen():
                 if event.type == VkEventType.MESSAGE_NEW and event.to_me:
                     age = event.text
-                    self.input_looking_age(user_id, age)
-                    self.get_target_city(user_id)
-                    self.looking_for_persons(user_id)
-                    self.show_found_person(user_id)
-                    return
+                    age_from, age_to = self.input_looking_age(user_id, age)
+                    if age_from is not None and age_to is not None:
+                        city_id, city_title = self.get_target_city(user_id)
+                        if city_id is not None and city_title is not None:
+                            gender = self.looking_for_gender(user_id)
+                            if gender is not None:
+                                self.looking_for_persons(user_id)
+                                break
         else:
             show_person_id = list_found_persons.pop(0)
             self.send_msg(user_id, self.found_person_info(show_person_id))
